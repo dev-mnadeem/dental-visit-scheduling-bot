@@ -1,6 +1,9 @@
 # Dependencies
 node_modules
-package-lock.json
+# package-lock.json is deliberately NOT ignored. This is an application,
+# not a library: the lockfile is what makes a build reproducible, and the
+# Dockerfile's `npm ci` requires it. Ignoring it here while requiring it
+# there is why the backend image could never build.
 
 # Environment variables
 .env

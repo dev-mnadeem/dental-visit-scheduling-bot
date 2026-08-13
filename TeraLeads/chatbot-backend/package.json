@@ -31,7 +31,8 @@
     "express-rate-limit": "^7.1.5",
     "swagger-ui-express": "^5.0.0",
     "swagger-jsdoc": "^6.2.8",
-    "node-pg-migrate": "^6.2.2"
+    "node-pg-migrate": "^6.2.2",
+    "socket.io": "^4.7.5"
   },
   "devDependencies": {
     "nodemon": "^3.0.2",

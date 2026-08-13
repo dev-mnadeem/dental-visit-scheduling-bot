@@ -8,8 +8,13 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json* ./
 
-# Install dependencies
-RUN npm ci --only=production=false
+# `npm ci --only=production=false` was invalid on two counts: npm rejects
+# `--only=production=false` ("Must be one of: null, prod, production") and
+# ignores it, and `npm ci` requires a lockfile that was not in the repository.
+# The backend image could never build, which means the documented "easiest way
+# to run this" had never run. A lockfile is now committed, so `npm ci` does
+# what it is for: a reproducible install.
+RUN npm ci --include=dev
 
 # Build stage (if needed for any build steps)
 FROM base AS builder
