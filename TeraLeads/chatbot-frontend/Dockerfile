@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 
 # Install dependencies
-RUN npm ci --only=production=false
+RUN npm ci --include=dev
 
 # Stage 2: Builder
 FROM node:18-alpine AS builder
@@ -17,7 +17,15 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Set environment variables for build
+# NEXT_PUBLIC_* values are inlined into the client bundle by `npm run build`,
+# so they have to exist at build time. Passing them as runtime environment
+# variables — as the compose file did — has no effect on the shipped JS: the
+# browser kept calling whatever URL was baked in.
+ARG NEXT_PUBLIC_API_URL=http://localhost:3401
+ARG NEXT_PUBLIC_WS_URL=ws://localhost:3401
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
+
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
@@ -50,6 +58,8 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Start the application (server.js is in .next/standalone)
-CMD ["node", ".next/standalone/server.js"]
+# `.next/standalone` was copied to /app above, so the server entry point lands
+# at /app/server.js. Pointing at .next/standalone/server.js — the path inside
+# the *builder* — would not resolve in this stage.
+CMD ["node", "server.js"]
 
