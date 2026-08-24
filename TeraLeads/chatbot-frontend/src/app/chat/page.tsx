@@ -19,7 +19,7 @@ export default function ChatPage() {
 
   return (
     <ProtectedRoute>
-      <div id="main-content" className="flex min-h-screen flex-col p-4 md:p-8" role="main">
+      <div id="main-content" className="flex h-screen flex-col p-4 md:p-8" role="main">
         <header className="flex items-center justify-between mb-6 md:mb-8">
           <h1 className="text-2xl md:text-3xl font-bold">Chat with AI Assistant</h1>
           <div className="flex items-center gap-4">
