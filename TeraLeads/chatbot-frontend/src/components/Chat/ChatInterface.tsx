@@ -166,7 +166,7 @@ export function ChatInterface() {
           : 'Disconnected'
 
   return (
-    <div className="flex flex-col min-h-[400px] md:h-[600px] border rounded-lg p-4 bg-white">
+    <div className="flex flex-col flex-1 min-h-[400px] border rounded-lg p-4 bg-white shadow-sm">
       <div className="flex items-center justify-between mb-4">
         <span
           className={`text-xs px-2 py-1 rounded ${
