@@ -133,3 +133,7 @@ npm test
 - Dates and times are wall-clock values in `BUSINESS_TIMEZONE` (UTC in the example). Relative
   dates use that zone in both services. Per-user timezone conversion and ambiguous DST times
   need additional product rules before deployment.
+
+## Author
+
+[**Muhammad Nadeem**](https://github.com/dev-mnadeem)
