@@ -32,7 +32,14 @@ const create = async (req, res, next) => {
     const { date, time, duration_minutes, service_type, notes, business_id } = req.body
     const appointment = await appointmentService.createAppointment(
       userId,
-      { date, time, duration_minutes, service_type, notes },
+      {
+        date,
+        time,
+        duration_minutes,
+        service_type,
+        notes,
+        booking_request_id: req.get('Idempotency-Key'),
+      },
       business_id
     )
     res.status(201).json(appointment)

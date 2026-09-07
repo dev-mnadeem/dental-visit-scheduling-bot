@@ -1,0 +1,55 @@
+name: Booking checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  assistant:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: TeraLeads/chatbot-ai
+    env:
+      LLM_PROVIDER: local
+      BUSINESS_TIMEZONE: UTC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+  booking-database:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: booking_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: local-ci-only
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 10
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: '5432'
+      DB_NAME: booking_test
+      DB_USER: postgres
+      DB_PASSWORD: local-ci-only
+      PGPASSWORD: local-ci-only
+      JWT_SECRET: local-ci-only-signing-key-never-deploy
+      AI_SERVICE_TOKEN: local-ci-only-service-token-never-deploy
+      RUN_DATABASE_TESTS: '1'
+      BUSINESS_TIMEZONE: UTC
+    defaults:
+      run:
+        working-directory: TeraLeads/chatbot-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: TeraLeads/chatbot-backend/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: psql -h 127.0.0.1 -U postgres -d booking_test -v ON_ERROR_STOP=1 -f src/database/schema.sql
+      - run: npm test -- --runInBand

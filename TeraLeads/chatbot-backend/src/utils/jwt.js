@@ -18,11 +18,9 @@ const logger = require('./logger')
  * WARNING: In production, this MUST be set via environment variable.
  * Using the default value is a security risk.
  */
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production'
-
-// Warn if using default secret in non-development environments
-if (!process.env.JWT_SECRET && process.env.NODE_ENV !== 'development') {
-  logger.warn('JWT_SECRET not set! Using default secret - SECURITY RISK!')
+const JWT_SECRET = process.env.JWT_SECRET
+if (!JWT_SECRET || JWT_SECRET.startsWith('your-secret')) {
+  throw new Error('Set JWT_SECRET to a generated secret before starting the backend')
 }
 
 /**

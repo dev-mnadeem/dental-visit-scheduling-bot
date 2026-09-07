@@ -31,7 +31,7 @@ const sendMessage = async (userId, sessionId, message) => {
   }
 
   const ai = await aiClient.sendMessage({
-    sessionId: sessionId || session.id,
+    sessionId: String(session.id),
     message,
     userId,
   })

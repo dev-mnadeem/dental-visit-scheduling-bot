@@ -24,23 +24,33 @@ function hasOverlap(start1, dur1, start2, dur2) {
 
 const createAppointment = async (userId, appointmentData, businessId = null) => {
   const { date, time, duration_minutes = 60, service_type, notes } = appointmentData
-
-  const isAvailable = await checkAvailability(date, time, duration_minutes)
-  if (!isAvailable) {
-    throw new AppointmentError('Time slot is not available', 409)
+  const key = appointmentData.booking_request_id
+  if (
+    key !== undefined &&
+    key !== null &&
+    (typeof key !== 'string' || !key.trim() || key.length > 128)
+  ) {
+    throw new AppointmentError('Idempotency-Key must contain 1 to 128 characters', 400)
   }
 
-  const appointment = await Appointment.create({
-    user_id: userId,
-    business_id: businessId,
-    date,
-    time,
-    duration_minutes,
-    service_type,
-    status: 'pending',
-    notes,
-  })
-  return appointment
+  try {
+    return await Appointment.create({
+      user_id: userId,
+      business_id: businessId,
+      booking_request_id: appointmentData.booking_request_id || null,
+      date,
+      time,
+      duration_minutes,
+      service_type,
+      status: 'pending',
+      notes,
+    })
+  } catch (error) {
+    if (error.code === '23P01') throw new AppointmentError('Time slot is not available', 409)
+    if (error.code === '23514') throw new AppointmentError('Invalid appointment duration', 400)
+    if (error.code === 'IDEMPOTENCY_CONFLICT') throw new AppointmentError(error.message, 409)
+    throw error
+  }
 }
 
 const getAppointmentsByUser = async (userId, businessId = null) => {
@@ -79,8 +89,13 @@ const updateAppointment = async (appointmentId, userId, updateData) => {
     }
   }
 
-  const updated = await Appointment.update(appointmentId, updateData)
-  return updated || appointment
+  try {
+    const updated = await Appointment.update(appointmentId, updateData)
+    return updated || appointment
+  } catch (error) {
+    if (error.code === '23P01') throw new AppointmentError('Time slot is not available', 409)
+    throw error
+  }
 }
 
 const cancelAppointment = async (appointmentId, userId) => {

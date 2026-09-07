@@ -29,6 +29,7 @@ anything.
 from __future__ import annotations
 
 import re
+from utils.clock import business_now
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Type
 
@@ -78,7 +79,7 @@ INTENT_WORDS = [
 
 def extract_date(text: str, today: Optional[datetime] = None) -> Optional[str]:
     """Find a date. Returns YYYY-MM-DD, or None when nothing is stated."""
-    today = (today or datetime.now()).date()
+    today = (today or business_now()).date()
     lowered = text.lower()
 
     iso = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", text)

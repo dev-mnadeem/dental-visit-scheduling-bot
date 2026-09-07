@@ -12,12 +12,13 @@ Security considerations:
 - Logging excludes sensitive user data
 """
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from dotenv import load_dotenv
 import os
+import hmac
 import json
 from typing import Dict, Any
 
@@ -27,7 +28,7 @@ from flows.appointment_flow import AppointmentFlow
 from llm.provider import LLMProvider
 from storage.appointment_store import AppointmentStore
 from storage.log_store import LogStore
-from services.backend_client import BackendClient
+from services.backend_client import BackendClient, backend_authorization
 from utils.logger import setup_logger
 
 # Load environment variables
@@ -128,7 +129,8 @@ async def health_check():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, authorization: str | None = Header(default=None),
+               x_service_token: str | None = Header(default=None)):
     """
     Process chat messages and return AI responses
     
@@ -155,6 +157,12 @@ async def chat(request: ChatRequest):
         response = await chat(request)
         ```
     """
+    expected = os.getenv("AI_SERVICE_TOKEN", "")
+    if not expected or not x_service_token or not hmac.compare_digest(expected, x_service_token):
+        raise HTTPException(status_code=401, detail="Backend service authentication required")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="User authorization required")
+    auth_context = backend_authorization.set(authorization)
     try:
         # Validate inputs (handled by Pydantic)
         logger.info(json.dumps({
@@ -228,6 +236,9 @@ async def chat(request: ChatRequest):
         if os.getenv("ENVIRONMENT") == "development":
             error_message = str(e)
         raise HTTPException(status_code=500, detail=error_message)
+
+    finally:
+        backend_authorization.reset(auth_context)
 
 
 @app.exception_handler(Exception)

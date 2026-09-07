@@ -31,9 +31,7 @@ describe('Appointment Service', () => {
     })
 
     it('should throw when slot is not available', async () => {
-      Appointment.findByDateAndStatus.mockResolvedValue([
-        { id: 1, time: '10:00:00', duration_minutes: 60 },
-      ])
+      Appointment.create.mockRejectedValueOnce(Object.assign(new Error('overlap'), { code: '23P01' }))
 
       await expect(
         appointmentService.createAppointment(1, {

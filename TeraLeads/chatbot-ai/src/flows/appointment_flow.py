@@ -3,6 +3,7 @@ Appointment scheduling flow using LangChain with LLM-powered extraction
 """
 import re
 from datetime import datetime, timedelta
+from utils.clock import business_now
 from typing import Dict, Any, Tuple, Optional
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
@@ -69,7 +70,7 @@ class AppointmentFlow:
             return ""
         date_str = date_str.strip()
         # Handle relative dates
-        today = datetime.now().date()
+        today = business_now().date()
         if date_str.lower() in ("today", "tod"):
             return today.strftime("%Y-%m-%d")
         if date_str.lower() in ("tomorrow", "tom"):
@@ -265,13 +266,23 @@ Respond in a friendly, professional way. If booking an appointment, ask for any 
             appointment["user_id"] = user_id
         appointment["session_id"] = session_id
 
-        appointment_id = self.appointment_store.save(appointment)
-
-        # Try to sync to backend
-        synced = await self.backend_client.sync_appointment(appointment)
-        if not synced:
-            # Store locally anyway - backend may sync later
-            pass
+        # Keep a stable key until this intent is saved or explicitly changed.
+        import uuid
+        signature = tuple(appointment.get(key) for key in ("date", "time", "duration_minutes", "service_type"))
+        if state.get("booking_signature") != signature:
+            state["booking_signature"] = signature
+            state["booking_request_id"] = str(uuid.uuid4())
+        request_key = state["booking_request_id"]
+        appointment["booking_request_id"] = request_key
+        saved = await self.backend_client.create_appointment(appointment)
+        if not saved or not saved.get("id"):
+            response = (
+                "I could not confirm that appointment. The slot may have been taken "
+                "or the booking service is unavailable. No confirmation was issued. "
+                "Please try again or choose another time."
+            )
+            return response, {"status": "booking_failed", "appointment_data": appointment}
+        appointment_id = saved["id"]
 
         response = (
             f"Your appointment has been confirmed! "

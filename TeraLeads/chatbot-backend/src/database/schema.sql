@@ -33,12 +33,18 @@ CREATE TABLE IF NOT EXISTS appointments (
     business_id INTEGER REFERENCES businesses(id) ON DELETE SET NULL,
     date DATE NOT NULL,
     time TIME NOT NULL,
-    duration_minutes INTEGER DEFAULT 60,
+    duration_minutes INTEGER NOT NULL DEFAULT 60,
+    booking_request_id TEXT,
     service_type VARCHAR(100),
-    status VARCHAR(50) DEFAULT 'pending',
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT booking_request_unique UNIQUE (user_id, booking_request_id),
+    CONSTRAINT valid_duration CHECK (duration_minutes BETWEEN 1 AND 480),
+    CONSTRAINT no_active_overlap EXCLUDE USING gist (
+        tsrange(date + time, date + time + duration_minutes * interval '1 minute', '[)') WITH &&
+    ) WHERE (status IN ('pending', 'confirmed')),
     CONSTRAINT valid_status CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed'))
 );
 

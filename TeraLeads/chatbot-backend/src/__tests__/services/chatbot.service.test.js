@@ -38,7 +38,7 @@ describe('sendMessage', () => {
     const result = await chatbotService.sendMessage(1, SESSION_KEY, 'I want a consultation')
 
     expect(aiClient.sendMessage).toHaveBeenCalledWith({
-      sessionId: SESSION_KEY,
+      sessionId: '7',
       message: 'I want a consultation',
       userId: 1,
     })

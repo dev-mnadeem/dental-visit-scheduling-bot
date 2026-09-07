@@ -8,6 +8,8 @@
  * "This is a placeholder response. AI service integration pending."
  */
 
+const jwt = require('../utils/jwt')
+
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://ai-service:8000'
 const TIMEOUT_MS = Number(process.env.AI_SERVICE_TIMEOUT_MS || 15000)
 
@@ -19,13 +21,20 @@ const TIMEOUT_MS = Number(process.env.AI_SERVICE_TIMEOUT_MS || 15000)
  * is worse than one that says it is unavailable.
  */
 const sendMessage = async ({ sessionId, message, userId }) => {
+  const serviceToken = process.env.AI_SERVICE_TOKEN
+  if (!serviceToken) throw new Error('AI_SERVICE_TOKEN must be configured')
+  const authorization = `Bearer ${jwt.generateToken({ id: Number(userId) }, { expiresIn: '2m' })}`
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
   try {
     const res = await fetch(`${AI_SERVICE_URL}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Service-Token': serviceToken,
+        Authorization: authorization,
+      },
       body: JSON.stringify({
         session_id: String(sessionId),
         message,
@@ -44,7 +53,7 @@ const sendMessage = async ({ sessionId, message, userId }) => {
     const body = await res.json()
     return {
       message: body.response,
-      appointmentData: body.appointment_data || null,
+      appointmentData: body.metadata?.appointment_data || null,
     }
   } catch (err) {
     if (err.name === 'AbortError') {

@@ -71,16 +71,19 @@ const validateAppointment = (req, res, next) => {
     return res.status(400).json({ error: 'Invalid time format (use HH:MM or HH:MM:SS)' })
   }
 
-  const appointmentDate = new Date(date)
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  if (appointmentDate < today) {
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: process.env.BUSINESS_TIMEZONE || 'UTC',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date())
+  if (date < today) {
     return res.status(400).json({ error: 'Appointment date cannot be in the past' })
   }
 
-  if (req.body.duration_minutes !== undefined && req.body.duration_minutes !== null) {
-    const dur = parseInt(req.body.duration_minutes, 10)
-    if (isNaN(dur) || dur < 15 || dur > 480) {
+  if (req.body.duration_minutes !== undefined) {
+    const dur = req.body.duration_minutes
+    if (!Number.isInteger(dur) || dur < 15 || dur > 480) {
       return res.status(400).json({ error: 'Duration must be between 15 and 480 minutes' })
     }
   }
@@ -99,9 +102,9 @@ const validateAppointmentUpdate = (req, res, next) => {
     return res.status(400).json({ error: 'Invalid time format (use HH:MM or HH:MM:SS)' })
   }
 
-  if (duration_minutes !== undefined && duration_minutes !== null) {
-    const dur = parseInt(duration_minutes, 10)
-    if (isNaN(dur) || dur < 15 || dur > 480) {
+  if (duration_minutes !== undefined) {
+    const dur = duration_minutes
+    if (!Number.isInteger(dur) || dur < 15 || dur > 480) {
       return res.status(400).json({ error: 'Duration must be between 15 and 480 minutes' })
     }
   }

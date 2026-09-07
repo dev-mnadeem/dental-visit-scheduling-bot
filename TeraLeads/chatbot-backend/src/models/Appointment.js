@@ -13,6 +13,7 @@ class Appointment {
   static async create({
     user_id,
     business_id,
+    booking_request_id = null,
     date,
     time,
     duration_minutes = 60,
@@ -20,22 +21,72 @@ class Appointment {
     status = 'pending',
     notes,
   }) {
-    const query = `
-      INSERT INTO appointments (user_id, business_id, date, time, duration_minutes, service_type, status, notes, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-      RETURNING *
-    `
-    const result = await pool.query(query, [
-      user_id,
-      business_id || null,
-      date,
-      time,
-      duration_minutes,
-      service_type || null,
-      status,
-      notes || null,
-    ])
-    return result.rows[0]
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      if (booking_request_id) {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+          `booking:${user_id}:${booking_request_id}`,
+        ])
+        const previous = await client.query(
+          `
+          SELECT *, (date = $3::date AND time = $4::time
+            AND duration_minutes = $5
+            AND service_type IS NOT DISTINCT FROM $6::varchar
+            AND business_id IS NOT DISTINCT FROM $7::integer
+            AND notes IS NOT DISTINCT FROM $8::text) AS same_request
+          FROM appointments WHERE user_id = $1 AND booking_request_id = $2
+        `,
+          [
+            user_id,
+            booking_request_id,
+            date,
+            time,
+            duration_minutes,
+            service_type || null,
+            business_id || null,
+            notes || null,
+          ]
+        )
+        if (previous.rows.length) {
+          if (!previous.rows[0].same_request) {
+            const error = new Error(
+              'Booking key was already used for different appointment details'
+            )
+            error.code = 'IDEMPOTENCY_CONFLICT'
+            throw error
+          }
+          const { same_request, ...appointment } = previous.rows[0]
+          await client.query('COMMIT')
+          return appointment
+        }
+      }
+      const result = await client.query(
+        `
+        INSERT INTO appointments
+          (user_id, business_id, date, time, duration_minutes, service_type, status, notes, booking_request_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *
+      `,
+        [
+          user_id,
+          business_id || null,
+          date,
+          time,
+          duration_minutes,
+          service_type || null,
+          status,
+          notes || null,
+          booking_request_id,
+        ]
+      )
+      await client.query('COMMIT')
+      return result.rows[0]
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
   }
 
   static async findById(id) {

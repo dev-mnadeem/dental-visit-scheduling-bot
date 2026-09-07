@@ -16,11 +16,8 @@ def set_env():
 @pytest.fixture
 def client():
     """Create test client. Skips if LLM init fails."""
-    try:
-        from main import app  # noqa: F401 - app is in src when PYTHONPATH=src
-        return TestClient(app)
-    except Exception as e:
-        pytest.skip(f"Skipping integration test: {e}")
+    from main import app
+    return TestClient(app)
 
 
 def test_health_endpoint(client):
@@ -61,3 +58,8 @@ def test_chat_endpoint_full_flow(client):
     assert "response" in data
     assert "session_id" in data
     assert data["session_id"] == "integration-test-session"
+
+
+def test_chat_requires_backend_service_authentication(client):
+    response = client.post("/chat", json={"session_id": "private-session", "message": "yes", "user_id": 1})
+    assert response.status_code == 401

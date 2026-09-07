@@ -81,7 +81,8 @@ class TestAppointmentFlow:
     def test_normalize_date(self, appointment_flow):
         """Test date normalization."""
         from datetime import datetime
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        from utils.clock import business_now
+        today_str = business_now().strftime("%Y-%m-%d")
         assert appointment_flow._normalize_date("today") == today_str
         assert appointment_flow._normalize_date("2024-03-15") == "2024-03-15"
 
@@ -120,3 +121,34 @@ class TestAppointmentFlow:
         assert "time" in state["appointment_data"]
         assert "service_type" in state["appointment_data"]
         assert metadata.get("status") in ("collecting_info", "ready_to_book", "booked")
+
+
+@pytest.mark.asyncio
+async def test_confirmation_failure_never_claims_a_booking(appointment_flow, state_manager):
+    state = state_manager.get_state("failed-booking")
+    state["appointment_data"] = {"date": "2098-01-10", "time": "10:00:00", "service_type": "Consultation"}
+    appointment_flow.backend_client.create_appointment = AsyncMock(return_value=None)
+    appointment_flow.appointment_store.save = MagicMock()
+    response, metadata = await appointment_flow._handle_confirmation("failed-booking", state, 1)
+    assert metadata["status"] == "booking_failed"
+    assert "appointment_id" not in metadata
+    assert "No confirmation was issued" in response
+    appointment_flow.appointment_store.save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_confirmation_uses_backend_id_and_keeps_retry_key(appointment_flow, state_manager):
+    state = state_manager.get_state("retry-booking")
+    state["appointment_data"] = {"date": "2098-01-10", "time": "10:00:00", "service_type": "Consultation"}
+    appointment_flow.backend_client.create_appointment = AsyncMock(return_value={"id": 42})
+    appointment_flow.appointment_store.save = MagicMock()
+    for _ in range(2):
+        response, metadata = await appointment_flow._handle_confirmation("retry-booking", state, 1)
+        assert metadata["appointment_id"] == 42
+        assert "Confirmation ID: 42" in response
+    calls = appointment_flow.backend_client.create_appointment.call_args_list
+    assert calls[0].args[0]["booking_request_id"] == calls[1].args[0]["booking_request_id"]
+    state["appointment_data"]["time"] = "12:00:00"
+    await appointment_flow._handle_confirmation("retry-booking", state, 1)
+    assert calls[0].args[0]["booking_request_id"] != appointment_flow.backend_client.create_appointment.call_args.args[0]["booking_request_id"]
+    appointment_flow.appointment_store.save.assert_not_called()

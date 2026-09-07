@@ -1,12 +1,14 @@
 """
 HTTP client for backend service communication
 """
+from contextvars import ContextVar
 import os
 import logging
 from typing import Dict, Any, Optional
 import httpx
 
 logger = logging.getLogger(__name__)
+backend_authorization: ContextVar[str | None] = ContextVar("backend_authorization", default=None)
 
 
 class BackendClient:
@@ -21,7 +23,8 @@ class BackendClient:
         timeout: float = 10.0,
         max_retries: int = 3,
     ):
-        self.base_url = base_url or os.getenv("BACKEND_API_URL", "http://localhost:3000/api")
+        self.base_url = base_url or os.getenv("BACKEND_API_URL", "http://localhost:3001/api/")
+        self.base_url = self.base_url.rstrip("/") + "/"
         self.timeout = timeout or float(os.getenv("BACKEND_TIMEOUT", 10))
         self.max_retries = max_retries
         self._client: Optional[httpx.AsyncClient] = None
@@ -52,9 +55,15 @@ class BackendClient:
         Returns None if backend is unavailable.
         """
         client = await self._get_client()
+        headers = {}
+        authorization = backend_authorization.get()
+        if authorization:
+            headers["Authorization"] = authorization
+        if json and json.get("booking_request_id"):
+            headers["Idempotency-Key"] = json["booking_request_id"]
         for attempt in range(self.max_retries):
             try:
-                response = await client.request(method, path, json=json)
+                response = await client.request(method, path, json=json, headers=headers)
                 response.raise_for_status()
                 return response.json() if response.content else {}
             except httpx.HTTPStatusError as e:
