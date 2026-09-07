@@ -1,201 +1,245 @@
-# AI Chatbot Appointment Booking System
+# AI Appointment Booking Assistant
 
-A full-stack AI-powered chatbot system for appointment scheduling, built with Next.js, Node.js, Express, Python, and LangChain.
+A three-service system that books appointments through conversation. Type
+"I'd like a consultation next Wednesday at 11am" and it fills in the missing
+details, checks availability, refuses a double booking, and confirms.
 
-## Architecture
+Next.js frontend, Node/Express backend, Python/FastAPI AI service, PostgreSQL.
 
-The system consists of three main services:
+**It runs with no API key.** That was the main piece of work: the AI service
+previously raised in its constructor without `OPENAI_API_KEY`, so nothing —
+not the service, not the tests — would start without a billing relationship.
 
-1. **Frontend** (Next.js/React) - User interface and chat interface
-2. **Backend** (Node.js/Express) - REST API with authentication and database
-3. **AI Microservice** (Python/FastAPI) - LangChain-powered conversational AI
+---
 
-## Quick Start with Docker
-
-The easiest way to run the entire system is using Docker Compose:
+## Run it
 
 ```bash
-# 1. Clone the repository
-git clone <repository-url>
 cd TeraLeads
-
-# 2. Create environment file
 cp .env.example .env
-
-# 3. Update .env with your API keys
-# - Set JWT_SECRET (minimum 32 characters)
-# - Set OPENAI_API_KEY
-
-# 4. Start all services
-docker-compose up -d --build
-
-# 5. Access the application
-# Frontend: http://localhost:3000
-# Backend API: http://localhost:3001
-# AI Service: http://localhost:8000
-# API Docs: http://localhost:8000/docs
+docker compose up -d --build
 ```
 
-For detailed Docker instructions, see [DOCKER.md](./DOCKER.md).
+| | |
+|---|---|
+| Chat UI | http://localhost:3400 |
+| Backend API | http://localhost:3401 |
+| AI service docs | http://localhost:8400/docs |
 
-## Manual Setup
+Copying `.env.example` unchanged gives you a working system: `LLM_PROVIDER=auto`
+picks a hosted model when a key is present and the local rule-based model when
+one is not. Add an `OPENAI_API_KEY` to switch; nothing else changes.
 
-### Prerequisites
+![The booking conversation](docs/screenshots/chat.png)
 
-- Node.js 18+
-- Python 3.11+
-- PostgreSQL 14+
-- OpenAI API key (or Anthropic API key)
+That conversation is the local model. No network call left the machine.
 
-### Frontend Setup
+---
+
+## How a message travels
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant F as Next.js
+    participant B as Express
+    participant A as FastAPI + LangChain
+    participant D as PostgreSQL
+
+    U->>F: "next Wednesday at 11am"
+    F->>B: socket.io (HTTP fallback if unavailable)
+    B->>D: Find or open the session
+    B->>A: POST /chat
+    A->>A: Extract date, time, service
+    A->>A: Check availability
+    A-->>B: Reply + extracted slots
+    B->>D: Persist both sides of the turn
+    B-->>F: bot:message
+    F-->>U: Reply
+```
+
+Steps 4 and 8 did not exist. The backend's chat handler read:
+
+```js
+// TODO: Forward message to AI microservice
+// For now, return a placeholder response
+const response = { message: 'This is a placeholder response. AI service integration pending.' }
+```
+
+The three-service architecture the old README described was never connected.
+The browser talked to the backend, and the backend talked to nobody — every
+message in the UI came back as that placeholder string.
+
+---
+
+## Running without a key
+
+`LLMProvider` now selects a backend instead of demanding one:
+
+```mermaid
+flowchart TB
+    S[LLM_PROVIDER] -->|auto| K{usable key?}
+    S -->|openai / anthropic| E[hosted model<br/>fails loudly if the key is missing]
+    S -->|local| L
+    K -->|yes| E
+    K -->|no| L[LocalChatModel<br/>rules, no network]
+    E --> C[appointment flow<br/>unchanged either way]
+    L --> C
+```
+
+`LocalChatModel` is a real LangChain `BaseChatModel`, not a stub returning a
+fixed string. It implements both things the booking flow asks of a model:
+`invoke` for replies, and `with_structured_output(AppointmentExtraction)` for
+pulling the date, time and service out of a turn — which is what lets the flow
+run unmodified against either backend.
+
+It extracts with explicit patterns and, crucially, **abstains rather than
+guessing**. An unrecognised service or an ambiguous time comes back as `None`,
+which makes the flow ask for it. A booking assistant that invents an
+appointment time is worse than one that asks a second question.
+
+| | Hosted model | Local |
+|---|---|---|
+| Phrasing it handles | Anything | The patterns it was given |
+| Unrecognised input | Infers | Returns `None`, flow asks |
+| Cost | Per message | Zero |
+| Slot filling, availability, double-booking, persistence | Identical | Identical |
+
+What offline mode proves: the conversation state machine, slot filling, the
+availability check, the double-booking guard, persistence and the backend
+hand-off all work end to end. What it does not prove: how the system handles
+phrasing nobody anticipated. That is what the hosted model is for, and it is
+why this sits behind the same interface rather than replacing anything.
+
+### The placeholder-key trap
+
+`.env.example` shipped `OPENAI_API_KEY=your-openai-api-key-here`. That value is
+not empty, so a naive "is a key set?" check selects OpenAI and the first
+message fails with a 401 from the vendor — an error that points nowhere near
+the actual cause. Placeholder values are now recognised as *absent*:
+
+```python
+_PLACEHOLDER_MARKERS = ("your-", "changeme", "xxx", "<", "api-key-here", ...)
+```
+
+Asking for a vendor explicitly still fails loudly. An explicit request should
+never silently become something else.
+
+---
+
+## What was broken
+
+Everything below was found by trying to run the thing the README told people
+to run.
+
+**The backend image could not build.** Its Dockerfile ran
+`npm ci --only=production=false` — npm rejects that flag ("Must be one of:
+null, prod, production") and ignores it — and `npm ci` requires a lockfile.
+There was none. Worse, `package-lock.json` was listed in **both** `.gitignore`
+and `.dockerignore`, so the lockfile `npm ci` requires was guaranteed absent by
+construction. Lockfiles are now committed: this is an application, not a
+library, and a reproducible install is the point.
+
+**The frontend image could not build.** It copied `/app/public`, which did not
+exist, and then started `node .next/standalone/server.js` — the path inside the
+*builder* stage. After `COPY .next/standalone ./`, the entry point is at
+`/app/server.js`.
+
+**The browser called the wrong port.** `NEXT_PUBLIC_*` values are inlined into
+the client bundle at build time; compose passed them as runtime environment
+variables, which has no effect on the shipped JavaScript. They are build args
+now.
+
+**CORS blocked every request.** The backend allowed one origin, the frontend
+was served from another, so login failed in the browser while working perfectly
+from curl.
+
+**Every chat message returned 500.** The frontend generates an opaque string
+session id (`session-1788185187684-o6q91ysip`); the backend passed it straight
+to a lookup against `chat_sessions.id`, a `SERIAL` integer. Postgres raised
+`invalid input syntax for type integer`. The client's key is now stored
+alongside the row and the integer id stays internal — and `findById` treats a
+non-numeric id as a miss rather than a database error.
+
+**The WebSocket never connected.** The frontend shipped a complete socket.io
+client — auth handshake, reconnection, `message` / `chat:message` /
+`bot:message` events — and the backend had no socket.io server and no socket.io
+dependency. Every handshake 404'd, so the UI sat permanently on
+"Reconnecting..." and silently fell back to HTTP. The server half is now
+implemented, with JWT authentication on the handshake rather than per-event.
+
+---
+
+## Tests
 
 ```bash
-cd chatbot-frontend
-npm install
-cp .env.example .env
-# Update .env with API URLs
-npm run dev
+# AI service — 70 tests
+cd TeraLeads/chatbot-ai
+docker run --rm -v "$PWD":/w -w /w -e PYTHONPATH=/w/src teraleads-ai-service \
+  python -m pytest tests/ -q
+
+# Backend — 48 tests
+cd TeraLeads/chatbot-backend
+docker run --rm -v "$PWD":/w -w /w node:18-alpine \
+  sh -c 'npm ci --include=dev && npx jest'
 ```
 
-### Backend Setup
+Up from 26 and 41. The new tests concentrate on what was actually broken:
 
-```bash
-cd chatbot-backend
-npm install
-cp .env.example .env
-# Update .env with database and JWT configuration
+- **Extraction is conservative** — an unknown service, an ambiguous time and a
+  date fragment inside `2026-03-14` all return `None` rather than a guess.
+- **Provider selection** — no key, an empty key and a placeholder key all
+  select local; an explicit vendor request with no key raises.
+- **The chat turn handler** — that a turn reaches the AI service at all, that
+  the lookup uses the client key rather than the integer id, and that a failure
+  propagates rather than becoming an invented reply.
 
-# Setup database
-createdb chatbot_db
-psql -d chatbot_db -f src/database/schema.sql
-psql -d chatbot_db -f src/database/indexing.sql
+One of these caught a bug while being written: `extract_date("next friday")`
+returned *this* Friday, because the offset was already non-zero and
+`ahead or 7` left it unchanged.
 
-npm run dev
-```
+---
 
-### AI Service Setup
-
-```bash
-cd chatbot-ai
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env
-# Update .env with LLM API keys
-
-python src/main.py
-```
-
-## Project Structure
+## Layout
 
 ```
 TeraLeads/
-├── chatbot-frontend/     # Next.js frontend application
-├── chatbot-backend/      # Node.js/Express backend API
-├── chatbot-ai/           # Python/FastAPI AI microservice
-├── docker-compose.yml    # Docker Compose configuration
-├── DOCKER.md            # Docker setup guide
-└── CODE_QUALITY.md      # Code quality standards
+├── chatbot-frontend/     Next.js 14, Redux, socket.io client
+├── chatbot-backend/      Express, JWT, PostgreSQL
+│   └── src/
+│       ├── realtime.js       socket.io server (was missing)
+│       ├── services/
+│       │   ├── aiClient.js       calls the AI service (was a TODO)
+│       │   └── chatbot.service.js
+│       └── models/ChatSession.js
+└── chatbot-ai/           FastAPI + LangChain
+    └── src/llm/
+        ├── provider.py       backend selection
+        └── local_model.py    keyless LangChain chat model
 ```
 
-## Features
+## Configuration
 
-- **User Authentication**: JWT-based authentication with secure password hashing
-- **Real-time Chat**: WebSocket support for real-time conversations
-- **AI-Powered Conversations**: LangChain integration with OpenAI/Anthropic
-- **Appointment Scheduling**: Intelligent appointment booking flow
-- **Database**: PostgreSQL with optimized indexes
-- **API Documentation**: Swagger/OpenAPI docs
-- **Docker Support**: Full containerization with docker-compose
-- **Security**: Rate limiting, input validation, SQL injection prevention
+| Variable | Default | Purpose |
+|---|---|---|
+| `LLM_PROVIDER` | `auto` | `auto`, `openai`, `anthropic`, `local` |
+| `OPENAI_API_KEY` | empty | Present and real ⇒ hosted model |
+| `AI_SERVICE_URL` | `http://ai-service:8000` | Where the backend forwards turns |
+| `CORS_ORIGIN` | `http://localhost:3400` | Must match the frontend's port |
+| `FRONTEND_PORT` / `BACKEND_PORT` / `AI_PORT` | 3400 / 3401 / 8400 | Host ports |
 
-## API Endpoints
+## Known limitations
 
-### Authentication
-- `POST /api/auth/signup` - User registration
-- `POST /api/auth/login` - User login
-
-### Chatbot
-- `POST /api/chatbot/token` - Generate chatbot access token
-- `POST /api/chatbot/message` - Send chat message
-
-### Health Checks
-- `GET /health` - Service health status
-
-## Documentation
-
-- [Docker Setup Guide](./DOCKER.md) - Complete Docker instructions
-- [Code Quality Standards](./CODE_QUALITY.md) - Development guidelines
-- [Frontend README](./chatbot-frontend/README.md) - Frontend documentation
-- [Backend README](./chatbot-backend/README.md) - Backend documentation
-- [AI Service README](./chatbot-ai/README.md) - AI service documentation
-
-## Development
-
-### Running Tests
-
-```bash
-# Frontend
-cd chatbot-frontend && npm test
-
-# Backend
-cd chatbot-backend && npm test
-
-# AI Service
-cd chatbot-ai && pytest
-```
-
-### Linting
-
-```bash
-# Frontend
-cd chatbot-frontend && npm run lint
-
-# Backend
-cd chatbot-backend && npm run lint
-
-# AI Service
-cd chatbot-ai && pylint src/
-```
-
-## Environment Variables
-
-See `.env.example` for all required environment variables.
-
-### Required
-- `JWT_SECRET` - Secret key for JWT tokens (minimum 32 characters)
-- `OPENAI_API_KEY` - OpenAI API key for LLM
-
-### Optional
-- `LLM_PROVIDER` - LLM provider (`openai` or `anthropic`)
-- `DB_PASSWORD` - PostgreSQL password
-- `CORS_ORIGIN` - Allowed CORS origin
-
-## Security Considerations
-
-- All passwords are hashed using bcrypt
-- JWT tokens have expiration times
-- SQL injection prevention via parameterized queries
-- Rate limiting on sensitive endpoints
-- Input validation and sanitization
-- CORS configuration
-- Non-root users in Docker containers
-
-## Contributing
-
-1. Follow the code quality standards in [CODE_QUALITY.md](./CODE_QUALITY.md)
-2. Write tests for new features
-3. Update documentation as needed
-4. Ensure all linting checks pass
-
-## License
-
-[Your License Here]
-
-## Support
-
-For issues or questions, please check:
-1. Service logs: `docker-compose logs`
-2. Documentation in respective README files
-3. [DOCKER.md](./DOCKER.md) for Docker-specific issues
-
+- **The local model only knows the phrasings it was given.** That is the
+  design — it asks rather than guessing — but it is not a language model, and
+  anything unusual becomes a clarifying question.
+- **Appointments live in two places.** The AI service keeps a JSON store and
+  the backend has a `appointments` table; they are not reconciled. One of them
+  should own the booking.
+- **No timezone handling.** Times are naive, which is wrong the moment a user
+  and a business are in different zones.
+- **`socket.io` has no room or presence model.** One socket per user, replies
+  go back to the sender only.
+- **The landing page is a title and two buttons.** The chat screen is the
+  product; the rest of the UI is scaffolding.
